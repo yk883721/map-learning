@@ -90,14 +90,6 @@ public class CusHashMap<K, V>
 
     }
 
-    private void putAllForCreate(Map<? extends K,? extends V> map) {
-
-        for (Map.Entry<? extends K, ? extends V> e : map.entrySet()) {
-
-        }
-
-    }
-
     private static int roundUpToPowerOf2(int number){
         // assert number >= 0 : "number must be non-negative";
         // 假设 number >= 0, number 必须为非负数
@@ -110,6 +102,7 @@ public class CusHashMap<K, V>
 
     }
 
+    // 表初次膨胀
     private void inflateTable(int toSize){
         // Find a power of 2 >= toSize
         // 找到一个比 toSize 大的一个最小的 2 的幂次方数
@@ -123,9 +116,122 @@ public class CusHashMap<K, V>
 
     }
 
+    /**
+     * Initialization hook for subclasses. This method is called
+     * in all constructors and pseudo-constructors (clone, readObject)
+     * after HashMap has been initialized but before any entries have
+     * been inserted.  (In the absence of this method, readObject would
+     * require explicit knowledge of subclasses.)
+     */
+    void init(){
+        // 供子类实现使用
+    }
+
+    /**
+     * Initialize the hashing mask value. We defer initialization until we
+     * really need it.
+     */
     final boolean initHashSeedAsNeeded(int capacity) {
+
+        // todo rehash
+
         return false;
     }
+
+
+    /**
+     * Retrieve object hash code and applies a supplemental hash function to the
+     * result hash, which defends against poor quality hash functions.  This is
+     * critical because HashMap uses power-of-two length hash tables, that
+     * otherwise encounter collisions for hashCodes that do not differ
+     * in lower bits. Note: Null keys always map to hash 0, thus index 0.
+     */
+    final int hash(Object k) {
+        int h = hashSeed;
+        if (0 != h && k instanceof String) {
+            return sun.misc.Hashing.stringHash32((String) k);
+        }
+
+        h ^= k.hashCode();
+
+        // This function ensures that hashCodes that differ only by
+        // constant multiples at each bit position have a bounded
+        // number of collisions (approximately 8 at default load factor).
+        h ^= (h >>> 20) ^ (h >>> 12);
+        return h ^ (h >>> 7) ^ (h >>> 4);
+    }
+
+    // 指定 hash，数组长度，返回 存放 index
+    // & 操作实现取模：length 长度必须为 2 的次幂
+    private int indexFor(int h, int length) {
+        // assert Integer.bitCount(length) == 1 : "length must be a non-zero power of 2";
+        return h & (length - 1);
+    }
+
+    /**
+     * Returns the number of key-value mappings in this map.
+     */
+    public int size(){
+        return size;
+    }
+
+    /**
+     * Returns <tt>true</tt> if this map contains no key-value mappings.
+     */
+    public boolean isEmpty(){
+        return size == 0;
+    }
+
+    @Override
+    public V get(Object key) {
+        // todo get
+        return super.get(key);
+    }
+
+
+    private void putAllForCreate(Map<? extends K,? extends V> map) {
+
+        for (Map.Entry<? extends K, ? extends V> e : map.entrySet()) {
+            putForCreate(e.getKey(), e.getValue());
+        }
+
+    }
+
+    /**
+     * This method is used instead of put by constructors and
+     * pseudoconstructors (clone, readObject).  It does not resize the table,
+     * check for comodification, etc.  It calls createEntry rather than
+     * addEntry.
+     */
+    private void putForCreate(K key, V value) {
+        // 直接put，无需扩容
+
+        // 1. hash, index 计算
+        int hash = key == null ? 0 : hash(key);
+        int i = indexFor(hash, table.length);
+
+        /**
+         * Look for preexisting entry for key.  This will never happen for
+         * clone or deserialize.  It will only happen for construction if the
+         * input Map is a sorted map whose ordering is inconsistent w/ equals.
+         */
+        // 2. 寻找是否已存在，存在则替换
+        for (Entry<K, V> e = table[i]; e != null; e = e.next) {
+            Object k;
+            if (e.hash == hash &&
+                    ((k = e.key) == key || (key != null && key.equals(k)))) {
+                e.value = value;
+                return;
+            }
+        }
+
+        // 3.无需判断扩容，则直接 create
+        createEntry(hash, key, value, i);
+    }
+
+
+
+
 
     @Override
     public V put(K key, V value) {
@@ -183,9 +289,6 @@ public class CusHashMap<K, V>
     }
 
 
-    void init(){
-
-    }
 
     @Override
     public Set<Map.Entry<K, V>> entrySet() {
@@ -305,27 +408,6 @@ public class CusHashMap<K, V>
         size++;
     }
 
-    /**
-     * Retrieve object hash code and applies a supplemental hash function to the
-     * result hash, which defends against poor quality hash functions.  This is
-     * critical because HashMap uses power-of-two length hash tables, that
-     * otherwise encounter collisions for hashCodes that do not differ
-     * in lower bits. Note: Null keys always map to hash 0, thus index 0.
-     */
-    final int hash(Object k) {
-        int h = hashSeed;
-        if (0 != h && k instanceof String) {
-            return sun.misc.Hashing.stringHash32((String) k);
-        }
-
-        h ^= k.hashCode();
-
-        // This function ensures that hashCodes that differ only by
-        // constant multiples at each bit position have a bounded
-        // number of collisions (approximately 8 at default load factor).
-        h ^= (h >>> 20) ^ (h >>> 12);
-        return h ^ (h >>> 7) ^ (h >>> 4);
-    }
 
     /**
      * Rehashes the contents of this map into a new array with a
@@ -385,12 +467,7 @@ public class CusHashMap<K, V>
         }
     }
 
-    // 指定 hash，数组长度，返回 存放 index
-    // & 操作实现取模：length 长度必须为 2 的次幂
-    private int indexFor(int h, int length) {
-        // assert Integer.bitCount(length) == 1 : "length must be a non-zero power of 2";
-        return h & (length - 1);
-    }
+
 
     public static void main(String[] args) {
 
