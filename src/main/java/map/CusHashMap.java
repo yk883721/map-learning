@@ -6,6 +6,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
+import static java.util.Objects.hash;
+
 public class CusHashMap<K, V>
         extends CusAbstractMap<K, V>
         implements Map<K, V>, Cloneable, Serializable {
@@ -39,6 +41,13 @@ public class CusHashMap<K, V>
     // 用于在 iterators 迭代时，判断有没有并发修改，用来 fail-fast 快速失败
     transient int modCount;
 
+    /**
+     * A randomizing value associated with this instance that is applied to
+     * hash code of keys to make hash collisions harder to find. If 0 then
+     * alternative hashing is disabled.
+     */
+    transient int hashSeed = 0;
+
     public CusHashMap(int initialCapacity, float loadFactor){
         if (initialCapacity < 0) {
             throw new IllegalArgumentException("Illegal initial capacity: " +
@@ -65,6 +74,28 @@ public class CusHashMap<K, V>
 
     public CusHashMap(){
         this(DEFAULT_INITIAL_CAPACITY, DEFAULT_LOAD_FACTOR);
+    }
+
+    public CusHashMap(Map<? extends K, ? extends V> map){
+
+        // 1. 构造
+        this(Math.max((int)(map.size() / DEFAULT_LOAD_FACTOR) + 1,
+                DEFAULT_INITIAL_CAPACITY ), DEFAULT_LOAD_FACTOR);
+
+        // 2. 初次膨胀
+        inflateTable(threshold);
+
+        // putAll
+        putAllForCreate(map);
+
+    }
+
+    private void putAllForCreate(Map<? extends K,? extends V> map) {
+
+        for (Map.Entry<? extends K, ? extends V> e : map.entrySet()) {
+
+        }
+
     }
 
     private static int roundUpToPowerOf2(int number){
@@ -96,19 +127,37 @@ public class CusHashMap<K, V>
         return false;
     }
 
-//    @Override
-//    public V put(K key, V value) {
-//        // 1. 判断是否为初始空
-//        if (table == EMPTY_TABLE){
-//            // 第一次为空表，初始化扩容，threshold 即为 initialCapacity
-//            inflateTable(threshold);
-//        }
-//
-//        // 2. 判断 key 为 null, 单独处理
-//        if (key == null) {
-//            return putForNull(value);
-//        }
-//    }
+    @Override
+    public V put(K key, V value) {
+        // 1. 判断是否为初始空
+        if (table == EMPTY_TABLE){
+            // 第一次为空表，初始化扩容，threshold 即为 initialCapacity
+            inflateTable(threshold);
+        }
+
+        // 2. 判断 key 为 null, 单独处理
+        if (key == null) {
+            return putForNull(value);
+        }
+
+        // 3. 查找已存在数据
+        int hash = hash(key);
+        int i = indexFor(hash, table.length);
+
+        for (Entry<K, V> e = table[i]; e != null; e = e.next){
+            Object k;
+            if (e.hash == hash && ((k = e.key) == key || key.equals(k))) {
+                V oldValue = e.value;
+                e.value = value;
+                e.recordAccess(this);
+                return oldValue;
+            }
+        }
+
+        modCount++;
+        addEntry(hash, key, value, i);
+        return null;
+    }
 
     private V putForNull(V value) {
         // 1. 遍历链表, 寻找是否存在旧值
@@ -229,8 +278,53 @@ public class CusHashMap<K, V>
         if ((size >= threshold) && table[bucketIndex] != null){
             // 扩容，长度 * 2，保持 pow 2 的关系
             resize(table.length * 2);
+
+            // 扩容后 需重新计算 hash、下标
+            hash = key == null ? 0 : hash(key);
+            bucketIndex = indexFor(hash, table.length);
+
         }
 
+        createEntry(hash, key, value, bucketIndex);
+    }
+
+    /**
+     * Like addEntry except that this version is used when creating entries
+     * as part of Map construction or "pseudo-construction" (cloning,
+     * deserialization).  This version needn't worry about resizing the table.
+     *
+     * Subclass overrides this to alter the behavior of HashMap(Map),
+     * clone, and readObject.
+     */
+    private void createEntry(int hash, K key, V value, int bucketIndex) {
+        // 1. 头插法
+        Entry<K, V> e = table[bucketIndex];
+        table[bucketIndex] = new Entry<>(hash, key, value, e);
+
+        // 2. 添加完成后 size++
+        size++;
+    }
+
+    /**
+     * Retrieve object hash code and applies a supplemental hash function to the
+     * result hash, which defends against poor quality hash functions.  This is
+     * critical because HashMap uses power-of-two length hash tables, that
+     * otherwise encounter collisions for hashCodes that do not differ
+     * in lower bits. Note: Null keys always map to hash 0, thus index 0.
+     */
+    final int hash(Object k) {
+        int h = hashSeed;
+        if (0 != h && k instanceof String) {
+            return sun.misc.Hashing.stringHash32((String) k);
+        }
+
+        h ^= k.hashCode();
+
+        // This function ensures that hashCodes that differ only by
+        // constant multiples at each bit position have a bounded
+        // number of collisions (approximately 8 at default load factor).
+        h ^= (h >>> 20) ^ (h >>> 12);
+        return h ^ (h >>> 7) ^ (h >>> 4);
     }
 
     /**
@@ -289,7 +383,6 @@ public class CusHashMap<K, V>
                 e = next;
             }
         }
-
     }
 
     // 指定 hash，数组长度，返回 存放 index
